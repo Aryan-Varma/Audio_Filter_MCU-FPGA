@@ -1,0 +1,182 @@
+================================================================================
+REAL-TIME STEREO FIR FILTER PL ACCELERATOR
+Target: Xilinx ZedBoard (XC7Z020) + Renesas RA6E2 MCU (Cortex-M33)
+================================================================================
+
+--------------------------------------------------------------------------------
+1. DIRECTORY STRUCTURE
+--------------------------------------------------------------------------------
+
+esd_fir_project/
+├── tools/                      # Reference models, stimulus & streaming scripts
+│   ├── filter_design.py        # Parks-McClellan/equiripple FIR & Q1.15 quantizer
+│   ├── golden_fir_oracle.py    # Bit-exact integer reference (round & saturate)
+│   ├── gen_test_vectors.py     # Generates impulse, isolation, sat, twotone tests
+│   ├── pc_mcu_streamer.py      # PC-to-MCU USB-UART audio file streaming client
+│   └── coefficients_q15.hex    # 129 quantized 16-bit filter taps
+│
+├── rtl/                        # Synthesizable Verilog modules (8-Stage Pipeline)
+│   ├── coeff_ram.v             # Ping-pong BRAM (Bank 0 / Bank 1) with atomic commit
+│   ├── history_ram.v           # Independent L/R circular history buffers in BRAM
+│   ├── mac_lane.v              # Signed 16x16 multiplier with 40-bit accumulator
+│   ├── reduction_saturate.v    # Q1.15 scaling, round-to-nearest, and saturation
+│   ├── scheduler.v             # Control FSM, tap pointer indexing, sample alternation
+│   ├── spi_phy.v               # SPI Mode 0 PHY with 2-stage CDC synchronizers
+│   ├── packet_parser.v         # Packet decoder (0xA5 magic, LE words, XOR checksum)
+│   ├── input_job_fifo.v        # Decouples SPI ingestion from arithmetic execution
+│   ├── result_fifo.v           # Queues 16-bit filtered audio and serializes to bytes
+│   ├── admission_control.v     # Manages block submission & hardware ready/backpressure
+│   └── fpga_fir_top.v          # Top-level FPGA wrapper interconnecting the pipeline
+│
+├── tb/                         # SystemVerilog testbenches & assertion suites
+│   ├── tb_fir_core.sv          # Unit testbench validating the 5 arithmetic modules
+│   ├── tb_fpga_top_spi.sv      # Full chip-level SPI testbench simulating MCU jobs
+│   └── fir_sva_assertions.sv   # Continuous SVA monitors for handshake/commit safety
+│
+├── constraints/                # FPGA physical and timing constraints
+│   └── zedboard_pins.xdc       # Pin mappings for ZedBoard Pmod JA (3.3V) & 100 MHz clock
+│
+├── firmware/                   # Renesas RA6E2 MCU driver & bridge code (copy to e2 studio src/)
+│   ├── fir_accelerator_driver.h # Protocol opcodes, structures, and function prototypes
+│   ├── fir_accelerator_driver.c # FSP r_spi master driver and handshake polling
+│   └── hal_entry.c              # UART-to-SPI bridge application loop
+│
+└── data/
+    └── vectors/                # Hex stimulus and golden reference output files
+        ├── test_impulse_in.hex / test_impulse_expected.hex
+        ├── test_isolation_in.hex / test_isolation_expected.hex
+        ├── test_saturation_in.hex / test_saturation_expected.hex
+        └── test_twotone_in.hex / test_twotone_expected.hex
+
+
+--------------------------------------------------------------------------------
+2. FILE DESCRIPTIONS
+--------------------------------------------------------------------------------
+
+[tools/]
+- filter_design.py: Computes the 129-tap linear-phase FIR coefficients for 48 kHz,
+  quantizes to Q1.15 format, and exports coefficients_q15.hex.
+- golden_fir_oracle.py: Exact integer oracle matching hardware arithmetic
+  (accumulation, +16384 rounding bias, arithmetic right-shift 15, and saturation).
+- gen_test_vectors.py: Creates verification vectors (impulse response, left/right
+  isolation, saturation recovery, and two-tone passband/stopband).
+- pc_mcu_streamer.py: Host PC streaming script that reads a 48 kHz stereo .wav,
+  streams 256-byte blocks over USB-UART to the MCU, collects the filtered blocks,
+  and saves the resulting output .wav file.
+
+[rtl/]
+- coeff_ram.v: Double-banked memory array. The core reads from the active bank
+  while incoming SPI packets load the inactive bank. Bank swaps on atomic commit.
+- history_ram.v: Block RAM storing separate memory spaces for Left and Right
+  channels. Contains a synchronous counter-based memory clear engine.
+- mac_lane.v: Multiplies signed 16-bit operands into a 32-bit register and
+  accumulates into a 40-bit sign-extended accumulator (DSP48E1 mapping).
+- reduction_saturate.v: Pipelined reduction unit performing round-to-nearest
+  (ties away from zero) and clamping to [-32768, 32767].
+- scheduler.v: Sequencer FSM for 64-frame stereo blocks (128 samples). Manages
+  modulo read/write pointers and aligns pipeline delay control flags.
+- spi_phy.v: SPI Mode 0 physical interface. Uses double flip-flop synchronizers
+  to prevent clock domain crossing (CDC) metastability on sclk, cs_n, and mosi.
+- packet_parser.v: Interprets packets. Checks 0xA5 magic byte, decodes opcodes
+  (STATUS, WRITE_COEFF, COMMIT, SUBMIT, READ_RESULT, RESET_STREAM), and checks XOR.
+- input_job_fifo.v: Queues incoming samples from SPI (256 samples capacity).
+- result_fifo.v: Converts 16-bit filtered audio into 8-bit bytes (Little-Endian)
+  for SPI MISO reading.
+- admission_control.v: Asserts fpga_ready_irq when space is guaranteed. Blocks
+  jobs if result buffer would overflow.
+- fpga_fir_top.v: Top-level chip wrapper interconnecting all sub-modules to I/O pins.
+
+[tb/]
+- tb_fir_core.sv: SystemVerilog unit testbench validating arithmetic blocks
+  against golden hex files with 0 error tolerance.
+- tb_fpga_top_spi.sv: End-to-end SPI testbench executing complete MCU transactions
+  and verifying aborted packet recovery.
+- fir_sva_assertions.sv: SVA checking no commit mid-job, FIFO limits, and handshakes.
+
+[constraints/]
+- zedboard_pins.xdc: Maps SPI bus and handshake to ZedBoard Pmod JA and constrains
+  100 MHz primary clock.
+
+[firmware/]
+- fir_accelerator_driver.h / .c: Renesas RA6E2 C driver using FSP r_spi to write
+  coefficients, poll backpressure, and process blocks.
+- hal_entry.c: MCU main loop acting as a bridge between the PC UART and FPGA SPI.
+
+
+--------------------------------------------------------------------------------
+3. EXECUTION STEPS
+--------------------------------------------------------------------------------
+
+STEP 1: GENERATE COEFFICIENTS AND TEST VECTORS (PYTHON)
+------------------------------------------------------
+1. Open a terminal inside the project directory:
+   cd tools/
+   python filter_design.py
+   python gen_test_vectors.py
+2. Verify that tools/coefficients_q15.hex and data/vectors/*.hex are generated.
+
+STEP 2: RUN CORE ARITHMETIC SIMULATION (MODELSIM)
+-------------------------------------------------
+1. Open ModelSim and open your project (esd_fir_project.mpf).
+2. Add all 11 files in rtl/ plus tb/tb_fir_core.sv and tb/fir_sva_assertions.sv.
+3. Click "Compile All" and ensure all checkmarks turn green.
+4. Go to the "Library" tab, expand "work", right-click "tb_fir_core" -> "Simulate".
+5. In the transcript prompt, run:
+   run -all
+6. Check that all 4 tests print [PASS] with 0 errors.
+
+STEP 3: RUN TOP-LEVEL SPI SIMULATION (MODELSIM)
+-----------------------------------------------
+1. In the "Library" tab, right-click "tb_fpga_top_spi" -> "Simulate".
+2. In the transcript prompt, run:
+   run -all
+3. Confirm that SPI Audio Block 0 passes with 0 errors and packet abort recovery passes.
+
+STEP 4: VIVADO SYNTHESIS & BITSTREAM GENERATION
+-----------------------------------------------
+1. Create a Vivado project targeting xc7z020clg484-1 (ZedBoard).
+2. Add all files in rtl/, set fpga_fir_top.v as Top.
+3. Add constraints/zedboard_pins.xdc.
+4. Run Synthesis -> Run Implementation -> Check WNS >= 0 ns at 100 MHz.
+5. Generate Bitstream (fpga_fir_top.bit) and program the ZedBoard via Hardware Manager.
+
+STEP 5: RENESAS RA6E2 FIRMWARE CONFIGURATION (E2 STUDIO)
+--------------------------------------------------------
+1. In e2 studio configuration.xml:
+   - Add "SPI Driver on r_spi (g_spi0)":
+     * Bitrate: 10000000 (10 MHz)
+     * Clock Phase: Edge Odd (Mode 0)
+     * Clock Polarity: Low
+   - Add "UART Driver on r_sci_uart (g_uart0)":
+     * Channel: Channel connected to USB-UART virtual COM port
+     * Baudrate: 921600 bps
+     * Callback: g_uart0_callback
+   - Configure two GPIO pins: one output for CS, one input for FPGA_READY.
+2. Copy fir_accelerator_driver.h, fir_accelerator_driver.c, and hal_entry.c into
+   the src/ folder of the e2 studio project.
+3. Build and flash the firmware to the RA6E2 MCU.
+
+STEP 6: REAL-TIME AUDIO STREAMING FROM PC (PYTHON)
+--------------------------------------------------
+1. Ensure the ZedBoard and RA6E2 are wired together and powered on.
+2. Plug the RA6E2 USB debug cable into your PC and note its COM port (e.g., COM5).
+3. Run the PC streamer script with a 48 kHz stereo WAV file:
+   cd tools/
+   python pc_mcu_streamer.py COM5 input.wav filtered_output.wav
+4. Monitor the progress bar; upon completion, open filtered_output.wav in an
+   audio player (such as Audacity) to verify the filtered audio.
+
+
+--------------------------------------------------------------------------------
+4. HARDWARE WIRING REFERENCE (ZEDBOARD PMOD JA <-> RA6E2)
+--------------------------------------------------------------------------------
+
+Signal Name      ZedBoard JA Pin     Package Pin     RA6E2 Connection
+--------------------------------------------------------------------------------
+spi_cs_n         Pin JA1             Y11             Configured GPIO Output
+spi_mosi         Pin JA2             AA11            MOSI (g_spi0)
+spi_miso         Pin JA3             Y10             MISO (g_spi0)
+spi_sclk         Pin JA4             AA9             RSPCK (g_spi0)
+GND              Pin JA5 / JA11      GND             Board Ground (GND)
+fpga_ready_irq   Pin JA7             AB11            Configured GPIO Input
+================================================================================

@@ -1,0 +1,110 @@
+C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/scheduler.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/scheduler.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module scheduler
+
+Top level modules:
+	scheduler
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/mac_lane.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/mac_lane.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module mac_lane
+
+Top level modules:
+	mac_lane
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/result_fifo.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/result_fifo.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module result_fifo
+
+Top level modules:
+	result_fifo
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/fir_sva_assertions.sv {2 {vlog -work work -sv -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/fir_sva_assertions.sv
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module fir_sva_assertions
+** Warning: C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/fir_sva_assertions.sv(33): (vlog-2186) SystemVerilog testbench feature
+(randomization, coverage or assertion) detected in the design.
+These features are only supported in Questasim.
+** Warning: C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/fir_sva_assertions.sv(33): (vlog-2186) SystemVerilog testbench feature
+(randomization, coverage or assertion) detected in the design.
+These features are only supported in Questasim.
+** Warning: C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/fir_sva_assertions.sv(37): (vlog-2186) SystemVerilog testbench feature
+(randomization, coverage or assertion) detected in the design.
+These features are only supported in Questasim.
+-- Compiling package fir_sva_assertions_sv_unit
+
+Top level modules:
+** Warning: (vlog-2650) 'bind' found in compilation unit scope. Please use -cuname to ensure that 'bind' gets elaborated.
+	--none--
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/spi_phy.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/spi_phy.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module spi_phy
+
+Top level modules:
+	spi_phy
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/input_job_fifo.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/input_job_fifo.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module input_job_fifo
+
+Top level modules:
+	input_job_fifo
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/tb_fpga_top_spi.sv {1 {vlog -work work -sv -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/tb_fpga_top_spi.sv
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module tb_fpga_top_spi
+
+Top level modules:
+	tb_fpga_top_spi
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/admission_control.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/admission_control.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module admission_control
+
+Top level modules:
+	admission_control
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/fpga_fir_top.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/fpga_fir_top.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module fpga_fir_top
+
+Top level modules:
+	fpga_fir_top
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/history_ram.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/history_ram.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module history_ram
+
+Top level modules:
+	history_ram
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/coeff_ram.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/coeff_ram.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module coeff_ram
+
+Top level modules:
+	coeff_ram
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/packet_parser.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/packet_parser.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module packet_parser
+
+Top level modules:
+	packet_parser
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/tb_fir_core.sv {1 {vlog -work work -sv -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/tb/tb_fir_core.sv
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module tb_fir_core
+
+Top level modules:
+	tb_fir_core
+
+} {} {}} C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/reduction_saturate.v {1 {vlog -work work -stats=none C:/Users/aryan/OneDrive/Documents/Acad_Projects/RealTimeAudioProcessor/FIR_FPGA/rtl/reduction_saturate.v
+Model Technology ModelSim - Intel FPGA Edition vlog 2020.1 Compiler 2020.02 Feb 28 2020
+-- Compiling module reduction_saturate
+
+Top level modules:
+	reduction_saturate
+
+} {} {}}
