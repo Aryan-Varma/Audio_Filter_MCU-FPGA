@@ -1,0 +1,331 @@
+================================================================================
+RENESAS RA6E2 FIR FILTER PIPELINE: COMPLETE DEPLOYMENT & EXECUTION GUIDE
+Target Hardware: Renesas QuickConnect Design Kit v2.0 (RA6E2, ARM Cortex-M33)
+Project Scope:   Q1.15 Fixed-Point FIR Filter with Stop-and-Wait UART Pipeline
+================================================================================
+
+TABLE OF CONTENTS
+1. System Architecture & Technical Specifications
+2. Workspace File Inventory
+3. Host PC Environment Setup
+4. e² studio Project Configuration & MCU Flashing
+5. Execution Workflow 1: Controlled Synthetic Test Audio
+6. Execution Workflow 2: External Recorded WAV Audio
+7. Verification Metrics & Acceptance Criteria
+8. Troubleshooting & Common Pitfalls
+
+================================================================================
+1. SYSTEM ARCHITECTURE & TECHNICAL SPECIFICATIONS
+================================================================================
+
+1.1 DSP Kernel Specifications
+-----------------------------
+* Arithmetic:        Signed Q1.15 direct-form convolution.
+* Filter Order:      128 (129 taps, symmetric, linear-phase Type I).
+* Design Window:     Hamming window.
+* Default Cutoff:    4500 Hz (at 48000 Hz sample rate).
+* Accumulator:       64-bit signed integer to prevent internal register overflow.
+* Quantization:      Round-to-nearest with ties away from zero; saturated to
+                     [-32768, +32767].
+* Delay Line:        Circular ring buffer per channel (persistent state maintained
+                     across block boundaries).
+* Storage:           Filter tap weights placed in static Flash ROM (coefficients.h).
+
+1.2 Communication Protocol
+--------------------------
+* Physical Layer:    USB-UART Virtual COM Port (115200 baud, 8-N-1).
+* Transfer Model:    Stop-and-wait chunked replay (bounded MCU RAM usage).
+* Block Size:        64 frames per block (256 bytes per payload for stereo PCM16).
+* Frame Header (11 bytes, packed little-endian):
+    - [0:2] Magic Sync:       0x5A, 0xA5
+    - [2]   Version:          0x01
+    - [3]   Message Type:     0x01 (DATA), 0x02 (RESET), 0x03 (ACK), 0xFF (ERROR)
+    - [4]   Stream ID:        8-bit stream identifier
+    - [5:7] Sequence Number:  16-bit monotonic counter
+    - [7:9] Frame Count:      16-bit frame count in payload (e.g., 64)
+    - [9:11]Payload Length:   16-bit byte count (e.g., 256)
+* Payload:           Raw signed 16-bit little-endian interleaved PCM samples.
+* Trailer:           16-bit CRC-CCITT (Polynomial 0x1021, Seed 0xFFFF).
+
+================================================================================
+2. WORKSPACE FILE INVENTORY
+================================================================================
+
+All 20 project files reside in a single flat directory:
+
+Host-Side Python Suite:
+  1.  requirements.txt         - Python package dependencies
+  2.  audio_preprocessor.py    - Audio ingestion, synthetic tone generation, resampling
+  3.  filter_designer.py       - Windowed FIR design, Q1.15 quantizer, header exporter
+  4.  fir_oracle_reference.py  - Golden bit-accurate PC software reference model
+  5.  uart_protocol.py         - Packet serializer, parser, and CRC-16 engine
+  6.  stream_runner.py         - Stop-and-wait chunked UART streaming client
+  7.  audio_evaluator.py       - WAV reconstruction, SNR, integer delta, PSD plots
+  8.  run_pipeline.py          - Master end-to-end automation orchestrator
+
+MCU Embedded C Firmware (RA6E2 / Cortex-M33):
+  9.  protocol.h               - Protocol packet definitions and constants
+  10. protocol.c               - Packet validation, CRC verification, frame builder
+  11. coefficients.h           - Flash-resident Q1.15 filter tap weights
+  12. fir_filter.h             - Circular delay line and filter engine interface
+  13. fir_filter.c             - Fixed-point convolution and saturation core
+  14. audio_stream_manager.h   - Stream lifecycle, buffer management, telemetry API
+  15. audio_stream_manager.c   - Packet routing, state persistence, execution profiling
+  16. bsp_timer.h              - Microsecond profiling timer interface
+  17. bsp_timer.c              - ARM Cortex-M33 DWT cycle counter implementation
+  18. bsp_uart.h               - Buffered UART driver interface
+  19. bsp_uart.c               - Renesas FSP SCI UART wrapper with interrupt ring buffer
+  20. main.c                   - System entry point (hal_entry) and main polling loop
+
+================================================================================
+3. HOST PC ENVIRONMENT SETUP
+================================================================================
+
+3.1 Python Installation
+Ensure Python 3.9 or newer is installed and available in your system PATH.
+
+3.2 Dependency Installation
+Open a terminal in the folder containing the project files and run:
+    pip install -r requirements.txt
+
+Expected installed packages:
+  - numpy (>= 1.22.0)
+  - scipy (>= 1.9.0)
+  - matplotlib (>= 3.5.0)
+  - pyserial (>= 3.5)
+
+================================================================================
+4. E² STUDIO PROJECT CONFIGURATION & MCU FLASHING
+================================================================================
+
+4.1 Create the Base e² studio Project
+1. Launch Renesas e² studio.
+2. Select "File" -> "New" -> "Renesas C/C++ Project" -> "Renesas RA C/C++ Project".
+3. Name your project (e.g., `ra6e2_fir_pipeline`) and click Next.
+4. Set the Target Device:
+   - Device Family: RA6 Series
+   - Device: Select RA6E2 (or select the "EK-RA6E2" / "CK-RA6E2" board if listed).
+   - Toolchain: GNU ARM Embedded (GCC ARM Embedded).
+5. Select Project Type: "Bare Metal - Minimal" (or "No RTOS").
+6. Click Finish to create the project workspace.
+
+4.2 Configure Peripherals in the FSP Configurator (configuration.xml)
+1. Double-click `configuration.xml` in the Project Explorer to open the FSP editor.
+2. Navigate to the "Stacks" tab.
+3. Click "New Stack" -> "Connectivity" -> "UART (r_sci_uart)".
+4. Select the newly created `g_uart0 UART (r_sci_uart)` stack module.
+5. In the Properties window (bottom right), configure the parameters:
+   - General -> Name:                   g_uart0
+   - General -> Channel:                Select the SCI channel routed to the USB
+                                        virtual COM port (default on EK-RA6E2 is
+                                        typically SCI0 or SCI9 depending on the board
+                                        wiring; check board schematic).
+   - Baud Rate:                         115200
+   - Data Bits:                         8-bits
+   - Parity:                            None
+   - Stop Bits:                         1-bit
+   - Flow Control:                      None
+   - Interrupts -> Callback:            user_uart_callback
+   - Interrupts -> Receive Priority:    Priority 2 (or Priority 3)
+   - Interrupts -> Transmit Priority:   Priority 2 (or Priority 3)
+   - Interrupts -> Error Priority:      Priority 2 (or Priority 3)
+6. Navigate to the "Pins" tab:
+   - Expand "Connectivity: SCI" -> Select the active SCI channel.
+   - Verify the TXD and RXD pins are assigned to the correct MCU pins connected
+     to the onboard J-Link virtual COM port bridge.
+7. Click the "Generate Project Content" button (top right of the editor) to
+   generate `hal_data.h`, `hal_data.c`, vector tables, and pin mappings.
+
+4.3 Import Source Files into the Project
+1. In your operating system file manager, copy all C source and header files:
+     protocol.h, protocol.c
+     coefficients.h
+     fir_filter.h, fir_filter.c
+     audio_stream_manager.h, audio_stream_manager.c
+     bsp_timer.h, bsp_timer.c
+     bsp_uart.h, bsp_uart.c
+     main.c
+2. Paste them into the `src/` folder of the e² studio project.
+3. Note: If e² studio generated a default `hal_entry.c`, delete it or replace its
+   contents with `main.c` (since `main.c` defines `hal_entry(void)`).
+
+4.4 Verify and Build
+1. Click "Project" -> "Build Project" (or press Ctrl+B).
+2. Confirm the build output ends with `Build Finished. 0 errors, 0 warnings`.
+   (If an undefined symbol error appears regarding `s_tx_packet`, ensure line 136
+    and 141 in `main.c` use `&s_tx_packet` rather than `&tx_packet`).
+
+4.5 Flash the Microcontroller
+1. Connect the Renesas RA6E2 board to your PC via the USB debug connector.
+2. In e² studio, click "Run" -> "Debug Configurations...".
+3. Under "Renesas GDB Hardware Debugging", select your project.
+4. Verify the Debugger tab is set to "J-Link ARM" with target interface "SWD".
+5. Click "Debug" to flash the code onto the MCU.
+6. Once programmed, hit the "Resume" (F8) button or power-cycle the board so the
+   firmware runs continuously in its `while(1)` polling loop.
+
+4.6 Identify the COM Port
+1. Open Device Manager (Windows) or run `ls /dev/tty*` (Linux/macOS).
+2. Locate the "J-Link CDC UART Port" or "USB Serial Port".
+3. Note the assigned port name (e.g., `COM3`, `COM4`, `/dev/ttyUSB0`, `/dev/ttyACM0`).
+
+================================================================================
+5. EXECUTION WORKFLOW 1: CONTROLLED SYNTHETIC TEST AUDIO
+================================================================================
+
+This test evaluates the MCU's arithmetic accuracy using a dual-tone test signal:
+a 1000 Hz passband tone mixed with an 8000 Hz out-of-band interference tone.
+
+--- Option A: One-Command Master Automation ---
+Run the following command from your terminal:
+    python run_pipeline.py --mode synthetic-two-tone --port COM3
+
+(Replace COM3 with your actual COM port identifier).
+
+--- Option B: Step-by-Step Manual Pipeline ---
+Execute each stage sequentially to inspect intermediate artifacts:
+
+Step 1: Generate Synthetic Audio
+    python audio_preprocessor.py --mode synthetic-two-tone --rate 48000 --channels 2 --duration 2.0
+    * Outputs:
+      - noisy_input.pcm       (Raw signed 16-bit interleaved PCM samples)
+      - noisy_input.wav       (Playable input test audio)
+      - clean_target.pcm      (Pure 1000 Hz reference for SNR evaluation)
+      - noisy_input_meta.json (Stream parameters and SHA-256 data hash)
+
+Step 2: Synthesize and Export Quantized FIR Filter
+    python filter_designer.py --taps 129 --cutoff 4500 --rate 48000 --plot
+    * Outputs:
+      - coefficients_q15.txt  (ASCII signed Q1.15 integers for Python tools)
+      - coefficients.h        (C header ready for embedded compilation)
+      - filter_response.png   (Bode magnitude and phase visualization)
+
+Step 3: Run the Golden PC Software Reference
+    python fir_oracle_reference.py --rate 48000 --channels 2
+    * Outputs:
+      - reference_output.pcm  (Golden reference generated via 64-bit integer math)
+      - reference_output.wav  (Playable golden reference audio)
+      - reference_output_meta.json (Execution parameters and group delay)
+
+Step 4: Stream Audio Blocks to the MCU over UART
+    python stream_runner.py --port COM3 --block-frames 64 --channels 2
+    * Process:
+      - Sends MSG_TYPE_RESET to clear MCU delay lines.
+      - Transmits noisy_input.pcm in 64-frame chunks (256 bytes per chunk).
+      - Waits for MCU ACK packet containing filtered PCM output.
+      - Displays live progress bar, throughput, and round-trip latency.
+    * Outputs:
+      - mcu_output.pcm        (Raw PCM samples returned from the microcontroller)
+
+Step 5: Verify Accuracy and Plot Spectral Metrics
+    python audio_evaluator.py --rate 48000 --channels 2
+    * Outputs:
+      - mcu_output.wav        (Playable WAV file reconstructed from MCU samples)
+      - actual_mcu_waveform_and_spectrum.png (Time-domain & Welch PSD plots)
+
+================================================================================
+6. EXECUTION WORKFLOW 2: EXTERNAL RECORDED WAV AUDIO
+================================================================================
+
+This test takes an arbitrary external audio recording (speech, music, noise),
+resamples and normalizes it to 48 kHz stereo PCM16, processes it through the
+Renesas board, and renders a filtered WAV file.
+
+--- Option A: One-Command Master Automation ---
+Place your source audio file (e.g., `speech_sample.wav`) into the directory and run:
+    python run_pipeline.py --mode external --input-wav speech_sample.wav --port COM3
+
+--- Option B: Step-by-Step Manual Pipeline ---
+
+Step 1: Ingest, Resample, and Format External Audio
+    python audio_preprocessor.py --mode external --input-wav speech_sample.wav --rate 48000 --channels 2
+    * Automatically applies polyphase anti-aliasing resampling to 48000 Hz,
+      converts mono to stereo if necessary, and normalizes dynamic range.
+    * Outputs:
+      - noisy_input.pcm
+      - noisy_input.wav
+      - noisy_input_meta.json
+
+Step 2: Generate Filter Design (if not already generated)
+    python filter_designer.py --taps 129 --cutoff 4500 --rate 48000
+
+Step 3: Generate PC Reference Audio
+    python fir_oracle_reference.py --rate 48000 --channels 2
+    * Outputs:
+      - reference_output.pcm
+      - reference_output.wav
+
+Step 4: Stream External Audio to the MCU
+    python stream_runner.py --port COM3 --block-frames 64 --channels 2
+    * Reads noisy_input.pcm and streams all blocks to the RA6E2 board.
+    * Outputs:
+      - mcu_output.pcm
+
+Step 5: Reconstruct and Evaluate Audio
+    python audio_evaluator.py --rate 48000 --channels 2
+    * Outputs:
+      - mcu_output.wav
+      - actual_mcu_waveform_and_spectrum.png
+
+================================================================================
+7. VERIFICATION METRICS & ACCEPTANCE CRITERIA
+================================================================================
+
+Upon running `audio_evaluator.py`, check the terminal output against these
+numerical criteria:
+
+1. Arithmetic Correctness (Bit-Accurate Verification):
+   - Metric: "Max Integer Error"
+   - Acceptance: Must be exactly 0.
+   - Interpretation: An error of 0 confirms the C direct-form convolution on the
+     Cortex-M33 matches the 64-bit rounded PC reference model bit-for-bit.
+
+2. Spectral Filtering & Out-of-Band Attenuation:
+   - Inspection: Open `actual_mcu_waveform_and_spectrum.png`.
+   - Frequency Response: The 8000 Hz interference peak in the PSD plot must be
+     attenuated by >= 35 dB relative to the input spectrum, while the 1000 Hz
+     passband tone remains within +/- 0.5 dB of unity gain.
+
+3. Signal-to-Noise Ratio (SNR) Improvement:
+   - Metric: "SNR Improvement" (delta SNR)
+   - Acceptance: >= +12.0 dB improvement over the input signal for two-tone audio.
+
+4. Execution Timing & Real-Time Headroom:
+   - Real-time deadline for 64 frames @ 48 kHz: 1333.3 microseconds.
+   - MCU computation time measured by bsp_timer: typically < 250 microseconds per
+     block on the RA6E2 @ 100 MHz (~19% CPU load).
+
+================================================================================
+8. TROUBLESHOOTING & COMMON PITFALLS
+================================================================================
+
+Issue A: "Serial timeout / No response from MCU"
+- Cause: Host sent packets, but MCU did not reply within 1.0 second.
+- Fixes:
+  1. Verify the board's COM port number in Device Manager.
+  2. Confirm the MCU code is currently running (resume from breakpoint if paused
+     in e² studio debugger).
+  3. Verify the FSP UART callback name in `configuration.xml` is set to exactly
+     `user_uart_callback`.
+  4. Ensure the TX/RX pins in the FSP Pins tab match the virtual COM port SCI
+     channel.
+
+Issue B: "Max Integer Error is non-zero (e.g., 1 or 2)"
+- Cause: Rounding mode discrepancy between PC reference and MCU kernel.
+- Fix: Verify that `fir_round_and_saturate_q15()` in `fir_filter.c` uses
+  `(abs_acc + 16384LL) >> 15` with symmetrical sign restoration, matching the
+  rounding implementation in `fir_oracle_reference.py`.
+
+Issue C: "Permission Denied on COM port (Linux/macOS)"
+- Cause: Missing dialout user group permissions.
+- Fix: Run `sudo usermod -a -G dialout $USER` and log back in, or run the Python
+  scripts with appropriate device permissions.
+
+Issue D: "PermissionError / Access is denied on Windows COM port"
+- Cause: Another application (e.g., PuTTY, Tera Term, Serial Monitor, or an earlier
+  Python session) has the COM port open.
+- Fix: Close all serial terminal programs before running `stream_runner.py`.
+
+================================================================================
+END OF GUIDE
+================================================================================
