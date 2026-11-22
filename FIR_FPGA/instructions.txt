@@ -13,6 +13,7 @@ esd_fir_project/
 │   ├── golden_fir_oracle.py    # Bit-exact integer reference (round & saturate)
 │   ├── gen_test_vectors.py     # Generates impulse, isolation, sat, twotone tests
 │   ├── pc_mcu_streamer.py      # PC-to-MCU USB-UART audio file streaming client
+│   ├── verify_audio.py         # Bit-exact comparator between HW WAV and Oracle
 │   └── coefficients_q15.hex    # 129 quantized 16-bit filter taps
 │
 ├── rtl/                        # Synthesizable Verilog modules (8-Stage Pipeline)
@@ -63,6 +64,8 @@ esd_fir_project/
 - pc_mcu_streamer.py: Host PC streaming script that reads a 48 kHz stereo .wav,
   streams 256-byte blocks over USB-UART to the MCU, collects the filtered blocks,
   and saves the resulting output .wav file.
+- verify_audio.py: Compares hardware-recorded output WAV against bit-exact Python
+  oracle calculation and prints error statistics and match percentage.
 
 [rtl/]
 - coeff_ram.v: Double-banked memory array. The core reads from the active bank
@@ -104,79 +107,167 @@ esd_fir_project/
 
 
 --------------------------------------------------------------------------------
-3. EXECUTION STEPS
+3. ENVIRONMENT SETUP GUIDES
 --------------------------------------------------------------------------------
 
-STEP 1: GENERATE COEFFICIENTS AND TEST VECTORS (PYTHON)
-------------------------------------------------------
-1. Open a terminal inside the project directory:
+A. XILINX VIVADO PROJECT SETUP (ZEDBOARD)
+-----------------------------------------
+1. Open Vivado and select "Create Project".
+2. Enter Project Name (e.g., "zedboard_fir_accelerator") and target directory.
+3. Project Type: Choose "RTL Project" (leave "Do not specify sources" unchecked).
+4. Default Part Selection:
+   - Switch to the "Boards" tab.
+   - Filter/Search for "ZedBoard" (Select ZedBoard Zynq Evaluation and Development Kit).
+   - Alternatively, in the "Parts" tab, select part: "xc7z020clg484-1".
+5. Add Design Sources:
+   - Click "Add Files" and browse to the "rtl/" directory.
+   - Select all 11 synthesizable files:
+     admission_control.v, coeff_ram.v, history_ram.v, input_job_fifo.v,
+     mac_lane.v, packet_parser.v, reduction_saturate.v, result_fifo.v,
+     scheduler.v, spi_phy.v, and fpga_fir_top.v.
+   - Ensure "Scan and add subdirectories" is enabled.
+6. Set Top Module:
+   - In the "Sources" hierarchy window under "Design Sources", right-click
+     "fpga_fir_top.v" and click "Set as Top".
+7. Add Constraints:
+   - Click "Add Sources" -> "Add or create constraints".
+   - Browse to "constraints/" and select "zedboard_pins.xdc".
+8. Verification of Project Setup:
+   - In Vivado Flow Navigator, click "Run Synthesis".
+   - Ensure synthesis finishes cleanly with zero syntax errors.
+
+B. RENESAS E2 STUDIO PROJECT SETUP (RA6E2 FSP)
+----------------------------------------------
+1. Launch e2 studio with your desired workspace path.
+2. Select "File" -> "New" -> "RA C/C++ Project".
+3. Select "Renesas RA C/C++ Project" and click Next.
+4. Set Project Name (e.g., "ra6e2_fir_bridge") and click Next.
+5. Board and Device Selection:
+   - Device: Select "R7FA6E2BB3CFM" (or choose your exact RA6E2 Evaluation Kit from the Board list).
+   - Toolchain: Select "GNU ARM Embedded" (GCC for ARM Cortex-M).
+   - Click Next.
+6. Project Template:
+   - Choose "Bare Metal - Minimal" (or "No RTOS").
+   - Click Finish. This opens the FSP Configuration screen ("configuration.xml").
+7. Configure Stacks in FSP ("Stacks" tab):
+   a. Add SPI Master Stack:
+      - Click "New Stack" -> "Connectivity" -> "SPI (r_spi)".
+      - In Properties -> Settings:
+        * Name: g_spi0
+        * Channel: 0 (or target channel)
+        * Operating Mode: Master
+        * Clock Phase: Data sampled on odd edge (Edge Odd / Mode 0)
+        * Clock Polarity: Low when idle (Low / Mode 0)
+        * Bitrate: 10000000 (10 MHz)
+        * Bit Width: 8-bit
+        * Callback: g_spi0_callback
+   b. Add UART Stack:
+      - Click "New Stack" -> "Connectivity" -> "UART (r_sci_uart)".
+      - In Properties -> Settings:
+        * Name: g_uart0
+        * Channel: Target channel routed to onboard USB-UART bridge
+        * Baud Rate: 921600
+        * Callback: g_uart0_callback
+8. Configure GPIO Pins in FSP ("Pins" tab):
+   - Ports -> Select GPIO pin for FPGA_CS_PIN (e.g., Port 1 Pin 3):
+     * Mode: Output - Initial High
+   - Ports -> Select GPIO pin for FPGA_READY_PIN (e.g., Port 1 Pin 4):
+     * Mode: Input
+9. Generate Code:
+   - Click the "Generate Project Content" button (top right of FSP configurator).
+10. Import Custom Source Files:
+    - Copy "fir_accelerator_driver.h", "fir_accelerator_driver.c", and "hal_entry.c"
+      from "firmware/" into the generated "src/" folder inside your e2 studio project.
+    - Confirm files compile cleanly by clicking the "Build" (hammer) icon.
+
+
+--------------------------------------------------------------------------------
+4. PROCEDURE: SIMULATION TESTING (MODELSIM)
+--------------------------------------------------------------------------------
+
+STEP S1: GENERATE COEFFICIENTS AND TEST VECTORS (PYTHON)
+-------------------------------------------------------
+1. Open terminal inside tools/:
    cd tools/
    python filter_design.py
    python gen_test_vectors.py
-2. Verify that tools/coefficients_q15.hex and data/vectors/*.hex are generated.
+2. Verify that coefficients_q15.hex and data/vectors/*.hex are generated.
 
-STEP 2: RUN CORE ARITHMETIC SIMULATION (MODELSIM)
--------------------------------------------------
-1. Open ModelSim and open your project (esd_fir_project.mpf).
-2. Add all 11 files in rtl/ plus tb/tb_fir_core.sv and tb/fir_sva_assertions.sv.
-3. Click "Compile All" and ensure all checkmarks turn green.
+STEP S2: RUN CORE ARITHMETIC UNIT SIMULATION (tb_fir_core.sv)
+-------------------------------------------------------------
+1. Open ModelSim and load project (esd_fir_project.mpf).
+2. Add files to the project:
+   - All 11 files in rtl/
+   - tb/tb_fir_core.sv
+   - tb/fir_sva_assertions.sv
+3. Click "Compile All" and verify all files compile without syntax errors.
 4. Go to the "Library" tab, expand "work", right-click "tb_fir_core" -> "Simulate".
-5. In the transcript prompt, run:
+5. In Transcript prompt, run:
    run -all
-6. Check that all 4 tests print [PASS] with 0 errors.
+6. Verification criterion:
+   Confirm transcript outputs [PASS] for all 4 test vectors (impulse, isolation,
+   saturation, two-tone) with 0 errors.
 
-STEP 3: RUN TOP-LEVEL SPI SIMULATION (MODELSIM)
------------------------------------------------
+STEP S3: RUN CHIP-LEVEL SPI SYSTEM SIMULATION (tb_fpga_top_spi.sv)
+------------------------------------------------------------------
 1. In the "Library" tab, right-click "tb_fpga_top_spi" -> "Simulate".
-2. In the transcript prompt, run:
+2. In Transcript prompt, run:
    run -all
-3. Confirm that SPI Audio Block 0 passes with 0 errors and packet abort recovery passes.
-
-STEP 4: VIVADO SYNTHESIS & BITSTREAM GENERATION
------------------------------------------------
-1. Create a Vivado project targeting xc7z020clg484-1 (ZedBoard).
-2. Add all files in rtl/, set fpga_fir_top.v as Top.
-3. Add constraints/zedboard_pins.xdc.
-4. Run Synthesis -> Run Implementation -> Check WNS >= 0 ns at 100 MHz.
-5. Generate Bitstream (fpga_fir_top.bit) and program the ZedBoard via Hardware Manager.
-
-STEP 5: RENESAS RA6E2 FIRMWARE CONFIGURATION (E2 STUDIO)
---------------------------------------------------------
-1. In e2 studio configuration.xml:
-   - Add "SPI Driver on r_spi (g_spi0)":
-     * Bitrate: 10000000 (10 MHz)
-     * Clock Phase: Edge Odd (Mode 0)
-     * Clock Polarity: Low
-   - Add "UART Driver on r_sci_uart (g_uart0)":
-     * Channel: Channel connected to USB-UART virtual COM port
-     * Baudrate: 921600 bps
-     * Callback: g_uart0_callback
-   - Configure two GPIO pins: one output for CS, one input for FPGA_READY.
-2. Copy fir_accelerator_driver.h, fir_accelerator_driver.c, and hal_entry.c into
-   the src/ folder of the e2 studio project.
-3. Build and flash the firmware to the RA6E2 MCU.
-
-STEP 6: REAL-TIME AUDIO STREAMING FROM PC (PYTHON)
---------------------------------------------------
-1. Ensure the ZedBoard and RA6E2 are wired together and powered on.
-2. Plug the RA6E2 USB debug cable into your PC and note its COM port (e.g., COM5).
-3. Run the PC streamer script with a 48 kHz stereo WAV file:
-   cd tools/
-   python pc_mcu_streamer.py COM5 input.wav filtered_output.wav
-4. Monitor the progress bar; upon completion, open filtered_output.wav in an
-   audio player (such as Audacity) to verify the filtered audio.
+3. Verification criterion:
+   Confirm transcript outputs:
+   - [PASS] SPI Audio Block 0 verified: All 128 samples match golden reference!
+   - [PASS] SPI Parser recovered cleanly from aborted packet!
+   - ALL TOP-LEVEL SPI TESTS PASSED SUCCESSFULLY!
 
 
 --------------------------------------------------------------------------------
-4. HARDWARE WIRING REFERENCE (ZEDBOARD PMOD JA <-> RA6E2)
+5. PROCEDURE: HARDWARE IMPLEMENTATION & REAL-TIME TESTING
 --------------------------------------------------------------------------------
+
+STEP H1: BUILD & PROGRAM THE FPGA (VIVADO)
+------------------------------------------
+1. In the configured Vivado project, click "Generate Bitstream" in Flow Navigator.
+2. Check Timing Summary: Confirm WNS >= 0.000 ns and WHS >= 0.000 ns at 100 MHz.
+3. Connect PC USB cable to ZedBoard PROG port (J17), switch SW8 ON.
+4. In Hardware Manager, click "Auto Connect" -> "Program Device" using fpga_fir_top.bit.
+5. Verification criterion: Blue DONE LED on ZedBoard is illuminated solid.
+
+STEP H2: HARDWARE WIRING (ZEDBOARD PMOD JA <-> RENESAS RA6E2)
+-------------------------------------------------------------
+Power off both boards. Connect female-to-female jumper wires:
 
 Signal Name      ZedBoard JA Pin     Package Pin     RA6E2 Connection
 --------------------------------------------------------------------------------
-spi_cs_n         Pin JA1             Y11             Configured GPIO Output
-spi_mosi         Pin JA2             AA11            MOSI (g_spi0)
-spi_miso         Pin JA3             Y10             MISO (g_spi0)
-spi_sclk         Pin JA4             AA9             RSPCK (g_spi0)
+spi_cs_n         Pin JA1             Y11             Configured GPIO Output (P103)
+spi_mosi         Pin JA2             AA11            MOSI0 (g_spi0)
+spi_miso         Pin JA3             Y10             MISO0 (g_spi0)
+spi_sclk         Pin JA4             AA9             RSPCK0 (g_spi0)
 GND              Pin JA5 / JA11      GND             Board Ground (GND)
-fpga_ready_irq   Pin JA7             AB11            Configured GPIO Input
+fpga_ready_irq   Pin JA7             AB11            Configured GPIO Input (P104)
+
+*CRITICAL*: Never omit the common GND connection.
+
+STEP H3: FLASH MCU BRIDGE FIRMWARE (E2 STUDIO)
+----------------------------------------------
+1. In e2 studio, build the project (Project -> Build Project).
+2. Connect the RA6E2 evaluation board to the PC via its dedicated USB debug port.
+3. Click "Run" -> "Debug" (or "Run") to flash the compiled executable to the MCU.
+4. Once flashed, resume/run the target so the firmware enters hal_entry() loop.
+
+STEP H4: REAL-TIME STREAMING & RUNTIME TEST (PC)
+------------------------------------------------
+1. Connect RA6E2 USB port to PC and identify COM port in Device Manager (e.g. COM5).
+2. Open terminal in tools/:
+   cd tools/
+   python pc_mcu_streamer.py COM5 input.wav filtered_output.wav
+3. Monitor progress counter to 100%. The script writes filtered_output.wav.
+
+STEP H5: HARDWARE OUTPUT BIT-EXACT VERIFICATION
+----------------------------------------------
+1. In tools/, run verification script against the software oracle:
+   python verify_audio.py input.wav filtered_output.wav
+2. Verification criterion:
+   Confirm output prints:
+   [RESULT] PASS: Hardware output is 100% BIT-EXACT to the Golden Model!
+   (0 mismatched samples across all processed blocks).
 ================================================================================
